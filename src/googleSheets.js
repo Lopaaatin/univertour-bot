@@ -4,12 +4,13 @@ class GoogleSheetsService {
     constructor() {
         try {
             this.auth = new google.auth.GoogleAuth({
-                keyFile: 'service-account-key.json',
+                credentials: process.env.SERVICE_ACCOUNT_KEY ? JSON.parse(process.env.SERVICE_ACCOUNT_KEY) : null,
+                keyFile: process.env.SERVICE_ACCOUNT_KEY ? undefined : 'service-account-key.json',
                 scopes: ['https://www.googleapis.com/auth/spreadsheets'],
             });
             this.sheets = google.sheets({ version: 'v4', auth: this.auth });
             this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
-            
+
             console.log('Google Sheets ID:', this.spreadsheetId);
             console.log('Service Account Email:', this.auth.jsonContent?.client_email);
         } catch (error) {
@@ -49,19 +50,19 @@ class GoogleSheetsService {
             console.log('Sending request to Google Sheets...');
             const response = await this.sheets.spreadsheets.values.append(request);
             console.log('✅ Data saved successfully to row:', response.data.updates.updatedRange);
-            
+
             return response.data;
         } catch (error) {
             console.error('❌ Error saving to Google Sheets:');
             console.error('Error details:', error.message);
             console.error('Spreadsheet ID:', this.spreadsheetId);
-            
+
             if (error.code === 404) {
                 throw new Error(`Таблица не найдена. Проверьте ID таблицы: ${this.spreadsheetId}`);
             } else if (error.code === 403) {
                 throw new Error('Нет доступа к таблице. Убедитесь, что сервисный аккаунт имеет права редактора.');
             }
-            
+
             throw error;
         }
     }
@@ -79,7 +80,7 @@ class GoogleSheetsService {
 
             const rows = response.data.values;
             const applicationRow = rows.find(row => row[7] === eventId); // eventId в колонке H (8-я колонка, индекс 7)
-            
+
             if (applicationRow) {
                 return {
                     date: applicationRow[2],
@@ -91,7 +92,7 @@ class GoogleSheetsService {
                     eventId: applicationRow[7]
                 };
             }
-            
+
             return null;
         } catch (error) {
             console.error('Error getting application from Google Sheets:', error);

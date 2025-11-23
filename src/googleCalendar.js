@@ -3,8 +3,9 @@ const { google } = require('googleapis');
 class GoogleCalendarService {
     constructor() {
         this.auth = new google.auth.GoogleAuth({
-            keyFile: 'service-account-key.json',
-            scopes: ['https://www.googleapis.com/auth/calendar'],
+            credentials: process.env.SERVICE_ACCOUNT_KEY ? JSON.parse(process.env.SERVICE_ACCOUNT_KEY) : null,
+            keyFile: process.env.SERVICE_ACCOUNT_KEY ? undefined : 'service-account-key.json',
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
         this.calendar = google.calendar({ version: 'v3', auth: this.auth });
     }
