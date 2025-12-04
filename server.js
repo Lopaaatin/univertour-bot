@@ -1,12 +1,6 @@
-// Простой HTTP сервер для Render.com
-const http = require('http');
+require('dotenv').config();
+const { bot } = require('./src/index');
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('🤖 Univerland Excursions Bot is running!\n');
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Этот файл не нужен, если исправили index.js
+// Но можно использовать как точку входа
+console.log('Starting bot via server.js...');

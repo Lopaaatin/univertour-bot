@@ -3,9 +3,19 @@ const { google } = require('googleapis');
 class GoogleCalendarService {
     constructor() {
         this.auth = new google.auth.GoogleAuth({
-            credentials: process.env.SERVICE_ACCOUNT_KEY ? JSON.parse(process.env.SERVICE_ACCOUNT_KEY) : null,
-            keyFile: process.env.SERVICE_ACCOUNT_KEY ? undefined : 'service-account-key.json',
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+            credentials: process.env.SERVICE_ACCOUNT_KEY 
+                ? JSON.parse(process.env.SERVICE_ACCOUNT_KEY) 
+                : null,
+            keyFile: process.env.SERVICE_ACCOUNT_KEY 
+                ? undefined 
+                : 'service-account-key.json',
+            // УБЕДИТЕСЬ ЧТО ЕСТЬ ВСЕ НЕОБХОДИМЫЕ SCOPES
+            scopes: [
+                'https://www.googleapis.com/auth/calendar',
+                'https://www.googleapis.com/auth/calendar.events',
+                'https://www.googleapis.com/auth/calendar.readonly',
+                'https://www.googleapis.com/auth/calendar.settings.readonly'
+            ],
         });
         this.calendar = google.calendar({ version: 'v3', auth: this.auth });
     }

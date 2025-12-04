@@ -4,6 +4,9 @@ const { googleSheets } = require('./googleSheets');
 const { googleCalendar } = require('./googleCalendar');
 
 // Проверка конфигурации при запуске
+console.log('=== BOT STARTUP CHECK ===');
+console.log('Process ID:', process.pid);
+console.log('Start time:', new Date().toISOString());
 console.log('=== Конфигурация бота ===');
 console.log('ADMIN_CHAT_ID:', process.env.ADMIN_CHAT_ID);
 console.log('GOOGLE_SHEET_ID:', process.env.GOOGLE_SHEET_ID);
@@ -1113,27 +1116,50 @@ const PORT = process.env.PORT || 10000; // Используем 10000 для Ren
 // Функция запуска приложения
 async function startApp() {
     try {
-        console.log('🚀 Starting application...');
+        console.log('🚀 Starting application... PID:', process.pid);
         
-        // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ (важно для Render!)
+        // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`✅ HTTP server started on port ${PORT}`);
-            console.log(`🌐 URL: http://0.0.0.0:${PORT}`);
         });
 
-        // Затем запускаем бота
+        // Добавляем задержку перед запуском бота
+        console.log('⏳ Waiting 5 seconds before bot launch...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
         console.log('🤖 Starting Telegram bot...');
+        
+        // Явно закрываем предыдущие соединения
+        try {
+            await bot.telegram.close();
+        } catch (e) {
+            console.log('No previous connection to close');
+        }
+        
+        // Запускаем бота с force
         await bot.launch({
-            dropPendingUpdates: true
-            // Не добавляем webhook: false - это вызывает ошибку
+            dropPendingUpdates: true,
+            allowedUpdates: []
         });
         
         console.log('✅ Bot launched successfully!');
-        console.log('🚀 Application is fully operational!');
         
     } catch (error) {
-        console.error('❌ Failed to start application:', error);
-        process.exit(1);
+        console.error('❌ Failed to start application:', error.message);
+        
+        // Если ошибка 409 - ждем и пробуем еще раз
+        if (error.message.includes('409') || error.message.includes('Conflict')) {
+            console.log('🔄 Conflict detected, waiting 10 seconds and retrying...');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            console.log('🔄 Retrying bot launch...');
+            await bot.launch({
+                dropPendingUpdates: true,
+                allowedUpdates: []
+            });
+            console.log('✅ Bot launched on retry!');
+        } else {
+            process.exit(1);
+        }
     }
 }
 
