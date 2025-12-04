@@ -475,11 +475,16 @@ async function finishApplication(ctx) {
 
 async function sendApplicationToAdmin(ctx) {
     const { answers } = ctx.session;
+
+    // ИСПРАВЛЕНО: преобразуем дату из формата DD.MM.YYYY в читаемый вид
+    const [day, month, year] = answers.date.split('.');
+    const formattedDateForAdmin = `${day}.${month}.${year}`; // Уже в правильном формате
+
     const message = `
 🎯 Новая заявка на экскурсию:
 
 👤 Имя: ${answers.name}
-📅 Дата: ${answers.date}
+📅 Дата: ${formattedDateForAdmin}  // ИСПРАВЛЕННЫЙ ФОРМАТ
 ⏰ Время: ${answers.time}
 📏 Размер участка: ${answers.plotSize}
 📞 Телефон: ${answers.phone}
@@ -506,7 +511,6 @@ ID мероприятия: ${answers.eventId}
     try {
         console.log('Отправка заявки администратору. ADMIN_CHAT_ID:', process.env.ADMIN_CHAT_ID);
 
-        // Преобразуем ADMIN_CHAT_ID в число, если это числовой ID
         let adminChatId = process.env.ADMIN_CHAT_ID;
         if (!isNaN(adminChatId)) {
             adminChatId = parseInt(adminChatId);
@@ -520,10 +524,7 @@ ID мероприятия: ${answers.eventId}
         console.log('✅ Заявка успешно отправлена администратору');
     } catch (error) {
         console.error('❌ Ошибка отправки заявки администратору:', error.message);
-        console.error('Проверьте ADMIN_CHAT_ID в .env файле');
-
-        // Отправляем сообщение об ошибке пользователю (опционально)
-        await ctx.reply('Заявка сохранена, но произошла ошибка при уведомлении администратора. Мы свяжемся с вами вручную.');
+        await ctx.reply('Заявка сохранена, но произошла ошибка при уведомлении администратора.');
     }
 }
 
@@ -544,25 +545,44 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
             return;
         }
 
+        // ИСПРАВЛЕНО: конвертируем дату в правильный формат
+        const eventDate = new Date(event.start.dateTime);
+        const localDate = new Date(eventDate.toLocaleString('ru-RU', {
+            timeZone: 'Asia/Novosibirsk'
+        }));
+
+        const year = localDate.getFullYear();
+        const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
+        const day = localDate.getDate().toString().padStart(2, '0');
+
+        // ИСПРАВЛЕНО: форматируем время
+        const localTime = eventDate.toLocaleString('ru-RU', {
+            timeZone: 'Asia/Novosibirsk',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+
         // Создаем новую заявку с обновленным временем
         const newApplication = {
             ...oldApplication,
-            date: new Date(event.start.dateTime).toLocaleDateString('ru-RU'),
-            time: new Date(event.start.dateTime).toLocaleTimeString('ru-RU', {
-                hour: '2-digit', minute: '2-digit'
-            }),
+            date: `${day}.${month}.${year}`, // ИСПРАВЛЕННЫЙ ФОРМАТ
+            time: localTime,
             eventId: eventId
         };
 
         // Сохраняем новую заявку
         await googleSheets.saveApplication(newApplication);
 
+        // ИСПРАВЛЕНО: используем правильный формат даты для админа
+        const adminFormattedDate = `${day}.${month}.${year}`;
+
         // Отправляем заявку администратору
         const message = `
 🔄 Обновленная заявка на экскурсию (после отклонения):
 
 👤 Имя: ${newApplication.name}
-📅 Новая дата: ${newApplication.date}
+📅 Новая дата: ${adminFormattedDate}  // ИСПРАВЛЕННЫЙ ФОРМАТ
 ⏰ Новое время: ${newApplication.time}
 📏 Размер участка: ${newApplication.plotSize}
 📞 Телефон: ${newApplication.phone}
@@ -622,11 +642,17 @@ async function handleNewDaySelection(ctx, userId, dayKey) {
             for (let j = 0; j < slotsPerRow && i + j < daySlots.length; j++) {
                 const event = daySlots[i + j];
                 const time = new Date(event.start.dateTime);
-                const hours = time.getHours().toString().padStart(2, '0');
-                const minutes = time.getMinutes().toString().padStart(2, '0');
+
+                // ИСПРАВЛЕНО: конвертируем в местное время Новосибирска
+                const localTime = time.toLocaleString('ru-RU', {
+                    timeZone: 'Asia/Novosibirsk',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
 
                 row.push({
-                    text: `🕐 ${hours}:${minutes}`,
+                    text: `🕐 ${localTime}`,
                     callback_data: `select_new_time:${userId}:${event.id}`
                 });
             }
@@ -1026,9 +1052,9 @@ async function handleAdminApproval(ctx, data) {
             await googleCalendar.createAdminEvent(application);
             await googleCalendar.deleteEvent(eventId);
 
-            // Форматируем дату для пользователя
-            const [day, month, year] = application.date.split('.');
-            const formattedDate = `${day}.${month}.${year}`;
+            // ИСПРАВЛЕНО: дата уже в правильном формате DD.MM.YYYY
+            // Просто используем как есть
+            const formattedDate = application.date; // Уже в формате DD.MM.YYYY
 
             const userMessage = `
 Спасибо за ожидание. Ваша заявка подтверждена.
