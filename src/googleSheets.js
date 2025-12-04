@@ -116,9 +116,6 @@ class GoogleSheetsService {
         }
     }
 
-    [file name]: googleSheets.js
-    // Добавьте этот метод в класс GoogleSheetsService:
-
     async getApplicationsByUserId(userId) {
         try {
             const response = await this.sheets.spreadsheets.values.get({
