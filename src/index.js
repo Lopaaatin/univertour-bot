@@ -789,8 +789,31 @@ excursionScene.on('text', async (ctx) => {
             }
             break;
         case 5:
-            ctx.session.answers.additional = ctx.message.text;
-            await finishApplication(ctx);
+            try {
+                console.log('Step 5: Processing additional info');
+                ctx.session.answers.additional = ctx.message.text;
+
+                // Сохраняем userId
+                ctx.session.answers.userId = ctx.from.id.toString();
+
+                // Сохраняем в Google Sheets
+                console.log('Saving application...');
+                await googleSheets.saveApplication(ctx.session.answers);
+
+                // Отправляем сообщение пользователю
+                await ctx.reply('Спасибо за оставленную заявку. Мы свяжемся с вами, как только она будет подтверждена у менеджера.');
+
+                // Отправляем админу
+                await sendApplicationToAdmin(ctx);
+
+                // Выходим из сцены
+                await ctx.scene.leave();
+
+            } catch (error) {
+                console.error('Error in step 5:', error);
+                await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте еще раз /start');
+                await ctx.scene.leave();
+            }
             break;
     }
 });
