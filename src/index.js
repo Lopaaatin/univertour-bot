@@ -319,11 +319,17 @@ async function showTimeSelection(ctx, dayKey) {
         for (let j = 0; j < slotsPerRow && i + j < daySlots.length; j++) {
             const event = daySlots[i + j];
             const time = new Date(event.start.dateTime);
-            const hours = time.getHours().toString().padStart(2, '0');
-            const minutes = time.getMinutes().toString().padStart(2, '0');
+
+            // Конвертируем в местное время Новосибирска
+            const localTime = time.toLocaleString('ru-RU', {
+                timeZone: 'Asia/Novosibirsk',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
 
             row.push({
-                text: `🕐 ${hours}:${minutes}`,
+                text: `🕐 ${localTime}`,
                 callback_data: `select_time:${event.id}`
             });
         }
@@ -814,16 +820,28 @@ excursionScene.on('callback_query', async (ctx) => {
 
             ctx.session.answers.eventId = eventId;
 
-            // Используем локальное время для правильного отображения даты
+            // Используем локальное время Новосибирска для правильного отображения
             const eventDate = new Date(event.start.dateTime);
-            const year = eventDate.getFullYear();
-            const month = (eventDate.getMonth() + 1).toString().padStart(2, '0');
-            const day = eventDate.getDate().toString().padStart(2, '0');
+
+            // Конвертируем в местное время
+            const localDate = new Date(eventDate.toLocaleString('ru-RU', {
+                timeZone: 'Asia/Novosibirsk'
+            }));
+
+            const year = localDate.getFullYear();
+            const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
+            const day = localDate.getDate().toString().padStart(2, '0');
+
+            // Форматируем время
+            const localTime = eventDate.toLocaleString('ru-RU', {
+                timeZone: 'Asia/Novosibirsk',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
 
             ctx.session.answers.date = `${day}.${month}.${year}`;
-            ctx.session.answers.time = eventDate.toLocaleTimeString('ru-RU', {
-                hour: '2-digit', minute: '2-digit'
-            });
+            ctx.session.answers.time = localTime;
 
             ctx.session.step = 3;
             await ctx.editMessageText(`Выбрано: ${ctx.session.answers.date} в ${ctx.session.answers.time}`);
@@ -1117,7 +1135,7 @@ const PORT = process.env.PORT || 10000; // Используем 10000 для Ren
 async function startApp() {
     try {
         console.log('🚀 Starting application... PID:', process.pid);
-        
+
         // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`✅ HTTP server started on port ${PORT}`);
@@ -1126,27 +1144,27 @@ async function startApp() {
         // Добавляем задержку перед запуском бота
         console.log('⏳ Waiting 5 seconds before bot launch...');
         await new Promise(resolve => setTimeout(resolve, 5000));
-        
+
         console.log('🤖 Starting Telegram bot...');
-        
+
         // Явно закрываем предыдущие соединения
         try {
             await bot.telegram.close();
         } catch (e) {
             console.log('No previous connection to close');
         }
-        
+
         // Запускаем бота с force
         await bot.launch({
             dropPendingUpdates: true,
             allowedUpdates: []
         });
-        
+
         console.log('✅ Bot launched successfully!');
-        
+
     } catch (error) {
         console.error('❌ Failed to start application:', error.message);
-        
+
         // Если ошибка 409 - ждем и пробуем еще раз
         if (error.message.includes('409') || error.message.includes('Conflict')) {
             console.log('🔄 Conflict detected, waiting 10 seconds and retrying...');
