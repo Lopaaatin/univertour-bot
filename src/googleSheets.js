@@ -115,6 +115,53 @@ class GoogleSheetsService {
             return false;
         }
     }
+
+    [file name]: googleSheets.js
+    // Добавьте этот метод в класс GoogleSheetsService:
+
+    async getApplicationsByUserId(userId) {
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Sheet1!A:K',
+            });
+
+            if (!response.data.values) {
+                return [];
+            }
+
+            const rows = response.data.values.slice(1); // Пропускаем заголовок
+            const userApplications = [];
+
+            // Ищем все заявки пользователя (userId в колонке J, индекс 9)
+            for (const row of rows) {
+                if (row[9] === userId) { // userId в колонке J
+                    userApplications.push({
+                        timestamp: row[0],
+                        name: row[1],
+                        date: row[2],
+                        time: row[3],
+                        plotSize: row[4],
+                        phone: row[5],
+                        additional: row[6],
+                        eventId: row[7],
+                        status: row[8],
+                        userId: row[9],
+                        reminderStatus: row[10] || 'no'
+                    });
+                }
+            }
+
+            // Сортируем по времени (новые сначала)
+            return userApplications.sort((a, b) =>
+                new Date(b.timestamp) - new Date(a.timestamp)
+            );
+
+        } catch (error) {
+            console.error('Error getting applications by userId:', error);
+            return [];
+        }
+    }
 }
 
 module.exports = { googleSheets: new GoogleSheetsService() };

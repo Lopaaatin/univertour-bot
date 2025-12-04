@@ -476,15 +476,41 @@ async function finishApplication(ctx) {
 async function sendApplicationToAdmin(ctx) {
     const { answers } = ctx.session;
 
-    // ИСПРАВЛЕНО: преобразуем дату из формата DD.MM.YYYY в читаемый вид
-    const [day, month, year] = answers.date.split('.');
-    const formattedDateForAdmin = `${day}.${month}.${year}`; // Уже в правильном формате
+    // ИСПРАВЛЕННО: Правильно парсим дату из разных форматов
+    let formattedDateForAdmin;
+
+    if (answers.date) {
+        // Пробуем разные форматы даты
+        const dateParts = answers.date.split(/[.\/]/);
+
+        if (dateParts.length === 3) {
+            // Проверяем, какой формат: DD.MM.YYYY или MM.DD.YYYY
+            const firstPart = parseInt(dateParts[0]);
+            const secondPart = parseInt(dateParts[1]);
+
+            if (firstPart > 12) {
+                // Первая часть > 12 - значит это день (формат DD.MM.YYYY)
+                formattedDateForAdmin = `${dateParts[0]}.${dateParts[1]}.${dateParts[2]}`;
+            } else if (secondPart > 12) {
+                // Вторая часть > 12 - значит это день (формат MM.DD.YYYY)
+                formattedDateForAdmin = `${dateParts[1]}.${dateParts[0]}.${dateParts[2]}`;
+            } else {
+                // Непонятный формат, используем как есть
+                formattedDateForAdmin = answers.date;
+            }
+        } else {
+            // Нестандартный формат
+            formattedDateForAdmin = answers.date;
+        }
+    } else {
+        formattedDateForAdmin = 'Дата не указана';
+    }
 
     const message = `
 🎯 Новая заявка на экскурсию:
 
 👤 Имя: ${answers.name}
-📅 Дата: ${formattedDateForAdmin}  // ИСПРАВЛЕННЫЙ ФОРМАТ
+📅 Дата: ${formattedDateForAdmin}
 ⏰ Время: ${answers.time}
 📏 Размер участка: ${answers.plotSize}
 📞 Телефон: ${answers.phone}
@@ -510,6 +536,7 @@ ID мероприятия: ${answers.eventId}
 
     try {
         console.log('Отправка заявки администратору. ADMIN_CHAT_ID:', process.env.ADMIN_CHAT_ID);
+        console.log('Дата в заявке:', answers.date, '-> Форматированная:', formattedDateForAdmin);
 
         let adminChatId = process.env.ADMIN_CHAT_ID;
         if (!isNaN(adminChatId)) {
@@ -538,12 +565,16 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
             return;
         }
 
-        // Получаем старую заявку пользователя
-        const oldApplication = await googleSheets.getApplicationByEventId(eventId);
-        if (!oldApplication) {
+        // ИСПРАВЛЕНО: Получаем последнюю заявку пользователя по userId, а не по eventId
+        const userApplications = await googleSheets.getApplicationsByUserId(userId);
+
+        if (!userApplications || userApplications.length === 0) {
             await ctx.answerCbQuery('Заявка не найдена');
             return;
         }
+
+        // Берем последнюю заявку пользователя
+        const lastApplication = userApplications[userApplications.length - 1];
 
         // ИСПРАВЛЕНО: конвертируем дату в правильный формат
         const eventDate = new Date(event.start.dateTime);
@@ -565,10 +596,16 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
 
         // Создаем новую заявку с обновленным временем
         const newApplication = {
-            ...oldApplication,
-            date: `${day}.${month}.${year}`, // ИСПРАВЛЕННЫЙ ФОРМАТ
+            ...lastApplication,
+            name: lastApplication.name,
+            plotSize: lastApplication.plotSize,
+            phone: lastApplication.phone,
+            additional: lastApplication.additional || '',
+            date: `${day}.${month}.${year}`, // ИСПРАВЛЕННЫЙ ФОРМАТ DD.MM.YYYY
             time: localTime,
-            eventId: eventId
+            eventId: eventId,
+            userId: userId,
+            timestamp: new Date().toISOString()
         };
 
         // Сохраняем новую заявку
@@ -582,7 +619,7 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
 🔄 Обновленная заявка на экскурсию (после отклонения):
 
 👤 Имя: ${newApplication.name}
-📅 Новая дата: ${adminFormattedDate}  // ИСПРАВЛЕННЫЙ ФОРМАТ
+📅 Новая дата: ${adminFormattedDate}
 ⏰ Новое время: ${newApplication.time}
 📏 Размер участка: ${newApplication.plotSize}
 📞 Телефон: ${newApplication.phone}
