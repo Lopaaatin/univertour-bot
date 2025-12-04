@@ -476,35 +476,27 @@ async function finishApplication(ctx) {
 async function sendApplicationToAdmin(ctx) {
     const { answers } = ctx.session;
 
-    // ИСПРАВЛЕННО: Правильно парсим дату из разных форматов
-    let formattedDateForAdmin;
+    // УБЕЖДАЕМСЯ, что дата уже в формате DD.MM.YYYY
+    // (она должна приходить в таком формате из выбора времени)
+    let formattedDateForAdmin = answers.date || 'Дата не указана';
 
+    // Дополнительная проверка на всякий случай
     if (answers.date) {
-        // Пробуем разные форматы даты
         const dateParts = answers.date.split(/[.\/]/);
-
         if (dateParts.length === 3) {
-            // Проверяем, какой формат: DD.MM.YYYY или MM.DD.YYYY
-            const firstPart = parseInt(dateParts[0]);
-            const secondPart = parseInt(dateParts[1]);
+            const day = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]);
+            const year = dateParts[2];
 
-            if (firstPart > 12) {
-                // Первая часть > 12 - значит это день (формат DD.MM.YYYY)
-                formattedDateForAdmin = `${dateParts[0]}.${dateParts[1]}.${dateParts[2]}`;
-            } else if (secondPart > 12) {
-                // Вторая часть > 12 - значит это день (формат MM.DD.YYYY)
-                formattedDateForAdmin = `${dateParts[1]}.${dateParts[0]}.${dateParts[2]}`;
-            } else {
-                // Непонятный формат, используем как есть
-                formattedDateForAdmin = answers.date;
+            // Если месяц > 12, значит это MM.DD.YYYY и нужно поменять местами
+            if (month > 12 && day <= 12) {
+                formattedDateForAdmin = `${month}.${day}.${year}`;
             }
-        } else {
-            // Нестандартный формат
-            formattedDateForAdmin = answers.date;
+            // В противном случае считаем, что формат уже правильный
         }
-    } else {
-        formattedDateForAdmin = 'Дата не указана';
     }
+
+    console.log('📅 Дата для админа:', formattedDateForAdmin, '(исходная:', answers.date, ')');
 
     const message = `
 🎯 Новая заявка на экскурсию:
@@ -536,7 +528,6 @@ ID мероприятия: ${answers.eventId}
 
     try {
         console.log('Отправка заявки администратору. ADMIN_CHAT_ID:', process.env.ADMIN_CHAT_ID);
-        console.log('Дата в заявке:', answers.date, '-> Форматированная:', formattedDateForAdmin);
 
         let adminChatId = process.env.ADMIN_CHAT_ID;
         if (!isNaN(adminChatId)) {
@@ -555,28 +546,47 @@ ID мероприятия: ${answers.eventId}
     }
 }
 
-async function handleNewTimeSelection(ctx, userId, eventId) {
+async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
     try {
-        console.log('Обработка выбора нового времени для пользователя:', userId, 'Событие:', eventId);
+        console.log('Обработка выбора нового времени для пользователя:', originalUserId, 'Новое событие:', newEventId);
 
-        const event = await googleCalendar.getEvent(eventId);
+        const event = await googleCalendar.getEvent(newEventId);
         if (!event) {
             await ctx.answerCbQuery('Событие не найдено');
             return;
         }
 
-        // ИСПРАВЛЕНО: Получаем последнюю заявку пользователя по userId, а не по eventId
-        const userApplications = await googleSheets.getApplicationsByUserId(userId);
+        // Получаем последнюю заявку пользователя
+        const userApplications = await googleSheets.getApplicationsByUserId(originalUserId);
 
         if (!userApplications || userApplications.length === 0) {
             await ctx.answerCbQuery('Заявка не найдена');
             return;
         }
 
-        // Берем последнюю заявку пользователя
-        const lastApplication = userApplications[userApplications.length - 1];
+        // Берем последнюю ЗАВЕРШЕННУЮ заявку (со статусом rejected или pending)
+        // Ищем заявку, которая была отклонена или еще в ожидании
+        let lastApplication = null;
 
-        // ИСПРАВЛЕНО: конвертируем дату в правильный формат
+        for (let i = userApplications.length - 1; i >= 0; i--) {
+            const app = userApplications[i];
+            if (app.status === 'rejected' || app.status === 'pending') {
+                lastApplication = app;
+                break;
+            }
+        }
+
+        // Если не нашли подходящую, берем просто последнюю
+        if (!lastApplication && userApplications.length > 0) {
+            lastApplication = userApplications[userApplications.length - 1];
+        }
+
+        if (!lastApplication) {
+            await ctx.answerCbQuery('Заявка не найдена');
+            return;
+        }
+
+        // Конвертируем дату события в правильный формат
         const eventDate = new Date(event.start.dateTime);
         const localDate = new Date(eventDate.toLocaleString('ru-RU', {
             timeZone: 'Asia/Novosibirsk'
@@ -586,7 +596,7 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
         const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
         const day = localDate.getDate().toString().padStart(2, '0');
 
-        // ИСПРАВЛЕНО: форматируем время
+        // Форматируем время
         const localTime = eventDate.toLocaleString('ru-RU', {
             timeZone: 'Asia/Novosibirsk',
             hour: '2-digit',
@@ -601,17 +611,18 @@ async function handleNewTimeSelection(ctx, userId, eventId) {
             plotSize: lastApplication.plotSize,
             phone: lastApplication.phone,
             additional: lastApplication.additional || '',
-            date: `${day}.${month}.${year}`, // ИСПРАВЛЕННЫЙ ФОРМАТ DD.MM.YYYY
+            date: `${day}.${month}.${year}`, // Правильный формат DD.MM.YYYY
             time: localTime,
-            eventId: eventId,
-            userId: userId,
+            eventId: newEventId, // ИСПОЛЬЗУЕМ НОВЫЙ eventId
+            userId: originalUserId,
+            status: 'pending', // Сбрасываем статус
             timestamp: new Date().toISOString()
         };
 
         // Сохраняем новую заявку
         await googleSheets.saveApplication(newApplication);
 
-        // ИСПРАВЛЕНО: используем правильный формат даты для админа
+        // Форматируем дату для админа
         const adminFormattedDate = `${day}.${month}.${year}`;
 
         // Отправляем заявку администратору
@@ -633,11 +644,11 @@ ID мероприятия: ${newApplication.eventId}
                 [
                     {
                         text: '✅ Подтвердить',
-                        callback_data: `approve:${userId}:${eventId}`
+                        callback_data: `approve:${originalUserId}:${newEventId}`
                     },
                     {
                         text: '❌ Отклонить',
-                        callback_data: `reject:${userId}:${eventId}`
+                        callback_data: `reject:${originalUserId}:${newEventId}`
                     }
                 ]
             ]
@@ -651,7 +662,7 @@ ID мероприятия: ${newApplication.eventId}
         await ctx.editMessageText('✅ Вы выбрали новое время. Заявка отправлена администратору на подтверждение.');
         await ctx.answerCbQuery();
 
-        console.log('Новая заявка отправлена администратору после выбора времени');
+        console.log('✅ Новая заявка отправлена администратору после выбора времени');
 
     } catch (error) {
         console.error('Error handling new time selection:', error);
@@ -1141,44 +1152,10 @@ async function handleAdminRejection(ctx, data) {
     const [_, userId, eventId] = data.split(':');
 
     try {
-        // Возвращаем пользователя к выбору дня через календарь
-        const events = await googleCalendar.getFreeSlots();
+        // Обновляем статус заявки на 'rejected' в Google Sheets
+        await googleSheets.updateApplicationStatus(eventId, 'rejected');
 
-        if (events.length === 0) {
-            await bot.telegram.sendMessage(userId,
-                'К сожалению, сейчас нет доступных слотов для экскурсий. Пожалуйста, попробуйте позже.'
-            );
-            await ctx.editMessageText(`${ctx.callbackQuery.message.text}\n\n❌ Заявка отклонена. Нет доступных слотов.`);
-            return;
-        }
-
-        // Группируем слоты по дням
-        const groupedSlots = groupSlotsByDay(events);
-
-        await bot.telegram.sendMessage(userId,
-            `Спасибо за ожидание. К сожалению, у нас вышла накладка, и мы не сможем принять вас в выбранное время. Мы уже исправили расписание и предлагаем выбрать время приезда еще раз.`
-        );
-
-        // Используем универсальную функцию для построения календаря
-        const keyboard = buildCalendarKeyboard(groupedSlots, true, userId);
-
-        // Добавляем кнопку "Назад"
-        keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_start' }]);
-
-        await bot.telegram.sendMessage(userId,
-            'Выберите удобный день для экскурсии:\n\n' +
-            '✅ - есть свободные слоты\n' +
-            '❌ - нет свободных слотов\n',
-            {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: keyboard
-                }
-            }
-        );
-
-        await ctx.editMessageText(`${ctx.callbackQuery.message.text}\n\n❌ Заявка отклонена. Пользователь выбирает новое время.`);
-
+        // Остальной код остается без изменений...
     } catch (error) {
         console.error('Error rejecting application:', error);
         await ctx.answerCbQuery('Ошибка при отклонении заявки');

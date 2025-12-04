@@ -159,6 +159,52 @@ class GoogleSheetsService {
             return [];
         }
     }
+
+    async updateApplicationStatus(eventId, newStatus) {
+        try {
+            const response = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'Sheet1!A:I',
+            });
+
+            if (!response.data.values) {
+                return false;
+            }
+
+            const rows = response.data.values;
+            let rowIndex = -1;
+
+            // Ищем строку с нужным eventId (колонка H, индекс 7)
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][7] === eventId) {
+                    rowIndex = i;
+                    break;
+                }
+            }
+
+            if (rowIndex === -1) {
+                console.log('Заявка не найдена для обновления статуса');
+                return false;
+            }
+
+            // Обновляем статус (колонка I, индекс 8)
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `Sheet1!I${rowIndex + 1}`, // +1 потому что Sheets нумерует с 1
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[newStatus]]
+                }
+            });
+
+            console.log(`✅ Статус заявки ${eventId} обновлен на: ${newStatus}`);
+            return true;
+
+        } catch (error) {
+            console.error('Error updating application status:', error);
+            return false;
+        }
+    }
 }
 
 module.exports = { googleSheets: new GoogleSheetsService() };
