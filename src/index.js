@@ -1108,7 +1108,7 @@ const server = http.createServer((req, res) => {
 });
 
 // Получаем порт из переменной окружения или используем стандартный
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // Используем 10000 для Render
 
 // Функция запуска приложения
 async function startApp() {
@@ -1124,8 +1124,8 @@ async function startApp() {
         // Затем запускаем бота
         console.log('🤖 Starting Telegram bot...');
         await bot.launch({
-            dropPendingUpdates: true,
-            webhook: false // Явно отключаем вебхук
+            dropPendingUpdates: true
+            // Не добавляем webhook: false - это вызывает ошибку
         });
         
         console.log('✅ Bot launched successfully!');
@@ -1152,6 +1152,3 @@ process.once('SIGTERM', stopApp);
 
 // Запускаем приложение
 startApp();
-
-// Экспортируем для тестирования
-module.exports = { bot, server };
