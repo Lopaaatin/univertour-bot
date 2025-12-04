@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "reminders": "node src/check-reminders.js",
-    "server": "node server.js"
+    "test": "echo \"No tests yet\" && exit 0"
   },
   "keywords": ["telegram", "bot", "excursions"],
   "author": "Your Name",

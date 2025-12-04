@@ -1099,40 +1099,59 @@ bot.catch((err, ctx) => {
     ctx.reply('Произошла ошибка. Пожалуйста, попробуйте еще раз.');
 });
 
-// Запускаем бота и сервер
+const http = require('http');
+
+// Создаем HTTP сервер для Render
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('🤖 Univerland Excursions Bot is running!\n');
+});
+
+// Получаем порт из переменной окружения или используем стандартный
+const PORT = process.env.PORT || 3000;
+
+// Функция запуска приложения
 async function startApp() {
     try {
-        // Запускаем бота
-        console.log('Запускаем бота...');
+        console.log('🚀 Starting application...');
+        
+        // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ (важно для Render!)
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`✅ HTTP server started on port ${PORT}`);
+            console.log(`🌐 URL: http://0.0.0.0:${PORT}`);
+        });
+
+        // Затем запускаем бота
+        console.log('🤖 Starting Telegram bot...');
         await bot.launch({
-            dropPendingUpdates: true
+            dropPendingUpdates: true,
+            webhook: false // Явно отключаем вебхук
         });
-        console.log('✅ Бот успешно запущен!');
-
-        // Запускаем HTTP сервер
-        server.listen(PORT, () => {
-            console.log(`🌐 HTTP сервер запущен на порту ${PORT}`);
-            console.log('🚀 Приложение готово к работе!');
-        });
-
-    } catch (err) {
-        console.error('❌ Ошибка запуска приложения:', err);
+        
+        console.log('✅ Bot launched successfully!');
+        console.log('🚀 Application is fully operational!');
+        
+    } catch (error) {
+        console.error('❌ Failed to start application:', error);
         process.exit(1);
     }
 }
 
-// Обработка graceful shutdown
-process.once('SIGINT', () => {
-    console.log('🛑 Останавливаем бота...');
-    bot.stop('SIGINT');
-    server.close();
-});
+// Graceful shutdown
+const stopApp = () => {
+    console.log('🛑 Stopping application...');
+    bot.stop();
+    server.close(() => {
+        console.log('✅ Application stopped');
+        process.exit(0);
+    });
+};
 
-process.once('SIGTERM', () => {
-    console.log('🛑 Останавливаем бота...');
-    bot.stop('SIGTERM');
-    server.close();
-});
+process.once('SIGINT', stopApp);
+process.once('SIGTERM', stopApp);
 
 // Запускаем приложение
 startApp();
+
+// Экспортируем для тестирования
+module.exports = { bot, server };
