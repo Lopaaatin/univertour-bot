@@ -405,6 +405,35 @@ function numberToEmoji(number) {
     return number.toString().split('').map(digit => emojiMap[digit] || digit).join('');
 }
 
+// Единая функция форматирования даты
+function formatDateForDisplay(dateString) {
+    if (!dateString) return 'Дата не указана';
+
+    // Если дата уже в формате DD.MM.YYYY
+    if (dateString.includes('.')) {
+        const parts = dateString.split('.');
+        if (parts.length === 3) {
+            // Проверяем формат
+            const day = parseInt(parts[0]);
+            const month = parseInt(parts[1]);
+
+            if (day > 0 && day <= 31 && month > 0 && month <= 12) {
+                // Уже правильный формат DD.MM.YYYY
+                return dateString;
+            }
+        }
+    }
+
+    // Если дата в формате YYYY-MM-DD (из dayKey)
+    if (dateString.includes('-')) {
+        const [year, month, day] = dateString.split('-');
+        return `${day}.${month}.${year}`;
+    }
+
+    // Если непонятный формат, возвращаем как есть
+    return dateString;
+}
+
 async function askForDateTime(ctx) {
     try {
         const events = await googleCalendar.getFreeSlots();
@@ -476,44 +505,15 @@ async function finishApplication(ctx) {
 async function sendApplicationToAdmin(ctx) {
     const { answers } = ctx.session;
 
-    // ЛОГИРУЕМ что приходит
-    console.log('📅 Исходная дата из answers:', answers.date);
-    console.log('⏰ Исходное время из answers:', answers.time);
+    console.log('📅 Исходные данные для админа:', answers);
 
-    let formattedDateForAdmin = answers.date || 'Дата не указана';
-
-    // Простая проверка - если дата в формате YYYY-MM-DD, конвертируем
-    if (answers.date && answers.date.includes('-')) {
-        const [year, month, day] = answers.date.split('-');
-        formattedDateForAdmin = `${day}.${month}.${year}`;
-    }
-    // Если дата уже в формате с точками
-    else if (answers.date && answers.date.includes('.')) {
-        const parts = answers.date.split('.');
-        if (parts.length === 3) {
-            // Проверяем, какой формат
-            const first = parseInt(parts[0]);
-            const second = parseInt(parts[1]);
-
-            if (first > 12 && second <= 12) {
-                // Первая часть > 12 (это день), вторая <= 12 (это месяц) - формат ДД.ММ.ГГГГ
-                // Все уже правильно, оставляем как есть
-                formattedDateForAdmin = answers.date;
-            } else if (first <= 12 && second > 12) {
-                // Первая <= 12 (месяц), вторая > 12 (день) - формат ММ.ДД.ГГГГ
-                // Меняем местами
-                formattedDateForAdmin = `${parts[1]}.${parts[0]}.${parts[2]}`;
-            }
-        }
-    }
-
-    console.log('📅 Форматированная дата для админа:', formattedDateForAdmin);
+    const formattedDate = formatDateForDisplay(answers.date);
 
     const message = `
 🎯 Новая заявка на экскурсию:
 
 👤 Имя: ${answers.name}
-📅 Дата: ${formattedDateForAdmin}
+📅 Дата: ${formattedDate}
 ⏰ Время: ${answers.time}
 📏 Размер участка: ${answers.plotSize}
 📞 Телефон: ${answers.phone}
@@ -538,8 +538,6 @@ ID мероприятия: ${answers.eventId}
     };
 
     try {
-        console.log('Отправка заявки администратору. ADMIN_CHAT_ID:', process.env.ADMIN_CHAT_ID);
-
         let adminChatId = process.env.ADMIN_CHAT_ID;
         if (!isNaN(adminChatId)) {
             adminChatId = parseInt(adminChatId);
@@ -553,52 +551,66 @@ ID мероприятия: ${answers.eventId}
         console.log('✅ Заявка успешно отправлена администратору');
     } catch (error) {
         console.error('❌ Ошибка отправки заявки администратору:', error.message);
-        await ctx.reply('Заявка сохранена, но произошла ошибка при уведомлении администратора.');
     }
 }
 
 async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
     try {
-        console.log('Обработка выбора нового времени для пользователя:', originalUserId, 'Новое событие:', newEventId);
+        console.log('🚀 Выбор нового времени после отклонения');
+        console.log('👤 Пользователь:', originalUserId);
+        console.log('🎯 Новое событие:', newEventId);
 
+        // 1. Получаем информацию о событии из календаря
         const event = await googleCalendar.getEvent(newEventId);
         if (!event) {
+            console.log('❌ Событие не найдено в календаре');
             await ctx.answerCbQuery('Событие не найдено');
             return;
         }
 
-        // Получаем последнюю заявку пользователя
+        console.log('📅 Найденное событие:', {
+            summary: event.summary,
+            start: event.start.dateTime,
+            end: event.end.dateTime
+        });
+
+        // 2. Получаем данные пользователя из последней ЗАВЕРШЕННОЙ заявки
         const userApplications = await googleSheets.getApplicationsByUserId(originalUserId);
 
         if (!userApplications || userApplications.length === 0) {
-            await ctx.answerCbQuery('Заявка не найдена');
+            console.log('❌ Нет заявок у пользователя');
+            await ctx.answerCbQuery('Нет данных для создания новой заявки');
             return;
         }
 
-        // Берем последнюю ЗАВЕРШЕННУЮ заявку (со статусом rejected или pending)
-        // Ищем заявку, которая была отклонена или еще в ожидании
-        let lastApplication = null;
-
+        // Ищем последнюю заявку (любую, кроме активной)
+        let userData = null;
         for (let i = userApplications.length - 1; i >= 0; i--) {
             const app = userApplications[i];
-            if (app.status === 'rejected' || app.status === 'pending') {
-                lastApplication = app;
+            // Берем первую попавшуюся для получения данных пользователя
+            if (app.name && app.phone && app.plotSize) {
+                userData = {
+                    name: app.name,
+                    phone: app.phone,
+                    plotSize: app.plotSize,
+                    additional: app.additional || ''
+                };
                 break;
             }
         }
 
-        // Если не нашли подходящую, берем просто последнюю
-        if (!lastApplication && userApplications.length > 0) {
-            lastApplication = userApplications[userApplications.length - 1];
-        }
-
-        if (!lastApplication) {
-            await ctx.answerCbQuery('Заявка не найдена');
+        if (!userData) {
+            console.log('❌ Не найдены данные пользователя');
+            await ctx.answerCbQuery('Не удалось получить ваши данные');
             return;
         }
 
-        // Конвертируем дату события в правильный формат
+        console.log('👤 Данные пользователя:', userData);
+
+        // 3. Формируем дату и время в правильном формате
         const eventDate = new Date(event.start.dateTime);
+
+        // Конвертируем в местное время Новосибирска
         const localDate = new Date(eventDate.toLocaleString('ru-RU', {
             timeZone: 'Asia/Novosibirsk'
         }));
@@ -615,34 +627,34 @@ async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
             hour12: false
         });
 
-        // Создаем новую заявку с обновленным временем
+        // 4. Создаем НОВУЮ заявку
         const newApplication = {
-            ...lastApplication,
-            name: lastApplication.name,
-            plotSize: lastApplication.plotSize,
-            phone: lastApplication.phone,
-            additional: lastApplication.additional || '',
-            date: `${day}.${month}.${year}`, // Правильный формат DD.MM.YYYY
+            name: userData.name,
+            plotSize: userData.plotSize,
+            phone: userData.phone,
+            additional: userData.additional,
+            date: `${day}.${month}.${year}`, // DD.MM.YYYY
             time: localTime,
-            eventId: newEventId, // ИСПОЛЬЗУЕМ НОВЫЙ eventId
-            userId: originalUserId,
-            status: 'pending', // Сбрасываем статус
-            timestamp: new Date().toISOString()
+            eventId: newEventId,
+            userId: originalUserId.toString(),
+            status: 'pending'
         };
 
-        // Сохраняем новую заявку
+        console.log('📝 Новая заявка для сохранения:', newApplication);
+
+        // 5. Сохраняем новую заявку
         await googleSheets.saveApplication(newApplication);
 
-        // Форматируем дату для админа
+        // 6. Форматируем дату для админа
         const adminFormattedDate = `${day}.${month}.${year}`;
 
-        // Отправляем заявку администратору
+        // 7. Отправляем заявку администратору
         const message = `
-🔄 Обновленная заявка на экскурсию (после отклонения):
+🔄 Новая заявка на экскурсию (после перезаписи):
 
 👤 Имя: ${newApplication.name}
-📅 Новая дата: ${adminFormattedDate}
-⏰ Новое время: ${newApplication.time}
+📅 Дата: ${adminFormattedDate}
+⏰ Время: ${newApplication.time}
 📏 Размер участка: ${newApplication.plotSize}
 📞 Телефон: ${newApplication.phone}
 💬 Дополнительно: ${newApplication.additional || 'Не указано'}
@@ -666,17 +678,19 @@ ID мероприятия: ${newApplication.eventId}
         };
 
         await bot.telegram.sendMessage(process.env.ADMIN_CHAT_ID, message, {
-            reply_markup: keyboard
+            reply_markup: keyboard,
+            parse_mode: 'HTML'
         });
 
-        // Уведомляем пользователя
+        // 8. Уведомляем пользователя
         await ctx.editMessageText('✅ Вы выбрали новое время. Заявка отправлена администратору на подтверждение.');
         await ctx.answerCbQuery();
 
-        console.log('✅ Новая заявка отправлена администратору после выбора времени');
+        console.log('✅ Новая заявка успешно создана и отправлена администратору');
 
     } catch (error) {
-        console.error('Error handling new time selection:', error);
+        console.error('❌ Ошибка при выборе нового времени:', error);
+        console.error('Stack:', error.stack);
         await ctx.answerCbQuery('Ошибка при выборе времени. Попробуйте еще раз.');
     }
 }
@@ -928,7 +942,7 @@ excursionScene.on('callback_query', async (ctx) => {
 
             ctx.session.answers.eventId = eventId;
 
-            // Используем локальное время Новосибирска для правильного отображения
+            // Используем локальное время Новосибирска
             const eventDate = new Date(event.start.dateTime);
 
             // Конвертируем в местное время
@@ -948,8 +962,15 @@ excursionScene.on('callback_query', async (ctx) => {
                 hour12: false
             });
 
+            // Сохраняем в формате DD.MM.YYYY
             ctx.session.answers.date = `${day}.${month}.${year}`;
             ctx.session.answers.time = localTime;
+
+            console.log('📅 Выбрана дата и время:', {
+                date: ctx.session.answers.date,
+                time: ctx.session.answers.time,
+                eventId: eventId
+            });
 
             ctx.session.step = 3;
             await ctx.editMessageText(`Выбрано: ${ctx.session.answers.date} в ${ctx.session.answers.time}`);
@@ -1164,10 +1185,10 @@ async function handleAdminRejection(ctx, data) {
 
     try {
         console.log(`Отклонение заявки от пользователя ${userId}, событие ${eventId}`);
-        
+
         // Обновляем статус заявки на 'rejected' в Google Sheets
         const statusUpdated = await googleSheets.updateApplicationStatus(eventId, 'rejected');
-        
+
         if (!statusUpdated) {
             console.log('Не удалось обновить статус заявки');
             await ctx.answerCbQuery('Ошибка при обновлении статуса');
