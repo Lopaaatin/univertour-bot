@@ -476,27 +476,38 @@ async function finishApplication(ctx) {
 async function sendApplicationToAdmin(ctx) {
     const { answers } = ctx.session;
 
-    // УБЕЖДАЕМСЯ, что дата уже в формате DD.MM.YYYY
-    // (она должна приходить в таком формате из выбора времени)
+    // ЛОГИРУЕМ что приходит
+    console.log('📅 Исходная дата из answers:', answers.date);
+    console.log('⏰ Исходное время из answers:', answers.time);
+
     let formattedDateForAdmin = answers.date || 'Дата не указана';
 
-    // Дополнительная проверка на всякий случай
-    if (answers.date) {
-        const dateParts = answers.date.split(/[.\/]/);
-        if (dateParts.length === 3) {
-            const day = parseInt(dateParts[0]);
-            const month = parseInt(dateParts[1]);
-            const year = dateParts[2];
+    // Простая проверка - если дата в формате YYYY-MM-DD, конвертируем
+    if (answers.date && answers.date.includes('-')) {
+        const [year, month, day] = answers.date.split('-');
+        formattedDateForAdmin = `${day}.${month}.${year}`;
+    }
+    // Если дата уже в формате с точками
+    else if (answers.date && answers.date.includes('.')) {
+        const parts = answers.date.split('.');
+        if (parts.length === 3) {
+            // Проверяем, какой формат
+            const first = parseInt(parts[0]);
+            const second = parseInt(parts[1]);
 
-            // Если месяц > 12, значит это MM.DD.YYYY и нужно поменять местами
-            if (month > 12 && day <= 12) {
-                formattedDateForAdmin = `${month}.${day}.${year}`;
+            if (first > 12 && second <= 12) {
+                // Первая часть > 12 (это день), вторая <= 12 (это месяц) - формат ДД.ММ.ГГГГ
+                // Все уже правильно, оставляем как есть
+                formattedDateForAdmin = answers.date;
+            } else if (first <= 12 && second > 12) {
+                // Первая <= 12 (месяц), вторая > 12 (день) - формат ММ.ДД.ГГГГ
+                // Меняем местами
+                formattedDateForAdmin = `${parts[1]}.${parts[0]}.${parts[2]}`;
             }
-            // В противном случае считаем, что формат уже правильный
         }
     }
 
-    console.log('📅 Дата для админа:', formattedDateForAdmin, '(исходная:', answers.date, ')');
+    console.log('📅 Форматированная дата для админа:', formattedDateForAdmin);
 
     const message = `
 🎯 Новая заявка на экскурсию:
@@ -1152,10 +1163,59 @@ async function handleAdminRejection(ctx, data) {
     const [_, userId, eventId] = data.split(':');
 
     try {
+        console.log(`Отклонение заявки от пользователя ${userId}, событие ${eventId}`);
+        
         // Обновляем статус заявки на 'rejected' в Google Sheets
-        await googleSheets.updateApplicationStatus(eventId, 'rejected');
+        const statusUpdated = await googleSheets.updateApplicationStatus(eventId, 'rejected');
+        
+        if (!statusUpdated) {
+            console.log('Не удалось обновить статус заявки');
+            await ctx.answerCbQuery('Ошибка при обновлении статуса');
+            return;
+        }
 
-        // Остальной код остается без изменений...
+        // Возвращаем пользователя к выбору дня через календарь
+        const events = await googleCalendar.getFreeSlots();
+
+        if (events.length === 0) {
+            await bot.telegram.sendMessage(userId,
+                'К сожалению, сейчас нет доступных слотов для экскурсий. Пожалуйста, попробуйте позже.'
+            );
+            await ctx.editMessageText(`${ctx.callbackQuery.message.text}\n\n❌ Заявка отклонена. Нет доступных слотов.`);
+            await ctx.answerCbQuery();
+            return;
+        }
+
+        // Группируем слоты по дням
+        const groupedSlots = groupSlotsByDay(events);
+
+        // Уведомляем пользователя
+        await bot.telegram.sendMessage(userId,
+            `Спасибо за ожидание. К сожалению, у нас вышла накладка, и мы не сможем принять вас в выбранное время. Мы уже исправили расписание и предлагаем выбрать время приезда еще раз.`
+        );
+
+        // Используем универсальную функцию для построения календаря
+        const keyboard = buildCalendarKeyboard(groupedSlots, true, userId);
+
+        // Добавляем кнопку "Назад"
+        keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_start' }]);
+
+        await bot.telegram.sendMessage(userId,
+            'Выберите удобный день для экскурсии:\n\n' +
+            '✅ - есть свободные слоты\n' +
+            '❌ - нет свободных слотов\n',
+            {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: keyboard
+                }
+            }
+        );
+
+        // Редактируем сообщение администратора
+        await ctx.editMessageText(`${ctx.callbackQuery.message.text}\n\n❌ Заявка отклонена. Пользователь выбирает новое время.`);
+        await ctx.answerCbQuery();
+
     } catch (error) {
         console.error('Error rejecting application:', error);
         await ctx.answerCbQuery('Ошибка при отклонении заявки');

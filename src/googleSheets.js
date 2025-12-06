@@ -162,12 +162,15 @@ class GoogleSheetsService {
 
     async updateApplicationStatus(eventId, newStatus) {
         try {
+            console.log(`Обновление статуса заявки ${eventId} на ${newStatus}`);
+
             const response = await this.sheets.spreadsheets.values.get({
                 spreadsheetId: this.spreadsheetId,
-                range: 'Sheet1!A:I',
+                range: 'Sheet1!A:J', // ИСПРАВЛЕНО: Добавили колонку J
             });
 
             if (!response.data.values) {
+                console.log('Нет данных в таблице');
                 return false;
             }
 
@@ -178,6 +181,7 @@ class GoogleSheetsService {
             for (let i = 0; i < rows.length; i++) {
                 if (rows[i][7] === eventId) {
                     rowIndex = i;
+                    console.log(`Найдена заявка в строке ${rowIndex + 1}`);
                     break;
                 }
             }
