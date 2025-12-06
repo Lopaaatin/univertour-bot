@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf, Scenes: { Stage, BaseScene }, session } = require('telegraf');
 const { googleSheets } = require('./googleSheets');
 const { googleCalendar } = require('./googleCalendar');
+const http = require('http');
 
 // Проверка конфигурации при запуске
 console.log('=== BOT STARTUP CHECK ===');
@@ -405,7 +406,7 @@ function numberToEmoji(number) {
     return number.toString().split('').map(digit => emojiMap[digit] || digit).join('');
 }
 
-// Единая функция форматирования даты
+// Единая функция форматирования даты в формате DD.MM.YYYY
 function formatDateForDisplay(dateString) {
     if (!dateString) return 'Дата не указана';
 
@@ -413,13 +414,13 @@ function formatDateForDisplay(dateString) {
     if (dateString.includes('.')) {
         const parts = dateString.split('.');
         if (parts.length === 3) {
-            // Проверяем формат
             const day = parseInt(parts[0]);
             const month = parseInt(parts[1]);
+            const year = parts[2];
 
             if (day > 0 && day <= 31 && month > 0 && month <= 12) {
                 // Уже правильный формат DD.MM.YYYY
-                return dateString;
+                return `${day.toString().padStart(2, '0')}.${month.toString().padStart(2, '0')}.${year}`;
             }
         }
     }
@@ -427,7 +428,7 @@ function formatDateForDisplay(dateString) {
     // Если дата в формате YYYY-MM-DD (из dayKey)
     if (dateString.includes('-')) {
         const [year, month, day] = dateString.split('-');
-        return `${day}.${month}.${year}`;
+        return `${day.padStart(2, '0')}.${month.padStart(2, '0')}.${year}`;
     }
 
     // Если непонятный формат, возвращаем как есть
@@ -488,18 +489,6 @@ async function askForAdditionalInfo(ctx) {
             ]
         }
     });
-}
-
-async function finishApplication(ctx) {
-    try {
-        await googleSheets.saveApplication(ctx.session.answers);
-        await ctx.reply('Спасибо за оставленную заявку. Мы свяжемся с вами, как только она будет подтверждена у менеджера.');
-        await sendApplicationToAdmin(ctx);
-        return ctx.scene.leave();
-    } catch (error) {
-        console.error('Error finishing application:', error);
-        await ctx.reply('Произошла ошибка при сохранении заявки. Пожалуйста, попробуйте еще раз.');
-    }
 }
 
 async function sendApplicationToAdmin(ctx) {
@@ -574,7 +563,7 @@ async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
             end: event.end.dateTime
         });
 
-        // 2. Получаем данные пользователя из последней ЗАВЕРШЕННОЙ заявки
+        // 2. Получаем данные пользователя из последней заявки
         const userApplications = await googleSheets.getApplicationsByUserId(originalUserId);
 
         if (!userApplications || userApplications.length === 0) {
@@ -583,11 +572,10 @@ async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
             return;
         }
 
-        // Ищем последнюю заявку (любую, кроме активной)
+        // Ищем последнюю заявку
         let userData = null;
         for (let i = userApplications.length - 1; i >= 0; i--) {
             const app = userApplications[i];
-            // Берем первую попавшуюся для получения данных пользователя
             if (app.name && app.phone && app.plotSize) {
                 userData = {
                     name: app.name,
@@ -611,13 +599,9 @@ async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
         const eventDate = new Date(event.start.dateTime);
 
         // Конвертируем в местное время Новосибирска
-        const localDate = new Date(eventDate.toLocaleString('ru-RU', {
-            timeZone: 'Asia/Novosibirsk'
-        }));
-
-        const year = localDate.getFullYear();
-        const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
-        const day = localDate.getDate().toString().padStart(2, '0');
+        const year = eventDate.getFullYear();
+        const month = (eventDate.getMonth() + 1).toString().padStart(2, '0');
+        const day = eventDate.getDate().toString().padStart(2, '0');
 
         // Форматируем время
         const localTime = eventDate.toLocaleString('ru-RU', {
@@ -645,15 +629,12 @@ async function handleNewTimeSelection(ctx, originalUserId, newEventId) {
         // 5. Сохраняем новую заявку
         await googleSheets.saveApplication(newApplication);
 
-        // 6. Форматируем дату для админа
-        const adminFormattedDate = `${day}.${month}.${year}`;
-
-        // 7. Отправляем заявку администратору
+        // 6. Отправляем заявку администратору
         const message = `
 🔄 Новая заявка на экскурсию (после перезаписи):
 
 👤 Имя: ${newApplication.name}
-📅 Дата: ${adminFormattedDate}
+📅 Дата: ${newApplication.date}
 ⏰ Время: ${newApplication.time}
 📏 Размер участка: ${newApplication.plotSize}
 📞 Телефон: ${newApplication.phone}
@@ -682,7 +663,7 @@ ID мероприятия: ${newApplication.eventId}
             parse_mode: 'HTML'
         });
 
-        // 8. Уведомляем пользователя
+        // 7. Уведомляем пользователя
         await ctx.editMessageText('✅ Вы выбрали новое время. Заявка отправлена администратору на подтверждение.');
         await ctx.answerCbQuery();
 
@@ -716,7 +697,7 @@ async function handleNewDaySelection(ctx, userId, dayKey) {
                 const event = daySlots[i + j];
                 const time = new Date(event.start.dateTime);
 
-                // ИСПРАВЛЕНО: конвертируем в местное время Новосибирска
+                // Конвертируем в местное время Новосибирска
                 const localTime = time.toLocaleString('ru-RU', {
                     timeZone: 'Asia/Novosibirsk',
                     hour: '2-digit',
@@ -945,14 +926,9 @@ excursionScene.on('callback_query', async (ctx) => {
             // Используем локальное время Новосибирска
             const eventDate = new Date(event.start.dateTime);
 
-            // Конвертируем в местное время
-            const localDate = new Date(eventDate.toLocaleString('ru-RU', {
-                timeZone: 'Asia/Novosibirsk'
-            }));
-
-            const year = localDate.getFullYear();
-            const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
-            const day = localDate.getDate().toString().padStart(2, '0');
+            const year = eventDate.getFullYear();
+            const month = (eventDate.getMonth() + 1).toString().padStart(2, '0');
+            const day = eventDate.getDate().toString().padStart(2, '0');
 
             // Форматируем время
             const localTime = eventDate.toLocaleString('ru-RU', {
@@ -1000,7 +976,9 @@ excursionScene.on('callback_query', async (ctx) => {
     }
     else if (data === 'skip_additional') {
         ctx.session.answers.additional = '';
-        await finishApplication(ctx);
+        await sendApplicationToAdmin(ctx);
+        await ctx.reply('Спасибо за оставленную заявку. Мы свяжемся с вами, как только она будет подтверждена у менеджера.');
+        await ctx.scene.leave();
     }
 
     await ctx.answerCbQuery();
@@ -1155,9 +1133,7 @@ async function handleAdminApproval(ctx, data) {
             await googleCalendar.createAdminEvent(application);
             await googleCalendar.deleteEvent(eventId);
 
-            // ИСПРАВЛЕНО: дата уже в правильном формате DD.MM.YYYY
-            // Просто используем как есть
-            const formattedDate = application.date; // Уже в формате DD.MM.YYYY
+            const formattedDate = formatDateForDisplay(application.date);
 
             const userMessage = `
 Спасибо за ожидание. Ваша заявка подтверждена.
@@ -1264,16 +1240,24 @@ bot.catch((err, ctx) => {
     ctx.reply('Произошла ошибка. Пожалуйста, попробуйте еще раз.');
 });
 
-const http = require('http');
-
-// Создаем HTTP сервер для Render
+// Создаем HTTP сервер для Render с health check
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('🤖 Univerland Excursions Bot is running!\n');
+    if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+            status: 'ok', 
+            timestamp: new Date().toISOString(),
+            pid: process.pid,
+            service: 'Univerland Excursions Bot'
+        }));
+    } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('🤖 Univerland Excursions Bot is running!\n');
+    }
 });
 
 // Получаем порт из переменной окружения или используем стандартный
-const PORT = process.env.PORT || 10000; // Используем 10000 для Render
+const PORT = process.env.PORT || 10000;
 
 // Функция запуска приложения
 async function startApp() {
@@ -1283,56 +1267,101 @@ async function startApp() {
         // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`✅ HTTP server started on port ${PORT}`);
+            console.log(`🔗 Health check available at: http://0.0.0.0:${PORT}/health`);
         });
-
-        // Добавляем задержку перед запуском бота
-        console.log('⏳ Waiting 5 seconds before bot launch...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
 
         console.log('🤖 Starting Telegram bot...');
 
-        // Явно закрываем предыдущие соединения
+        // ЗАПУСКАЕМ БОТА БЕЗ ЗАДЕРЖКИ, но с обработкой конфликта
         try {
-            await bot.telegram.close();
-        } catch (e) {
-            console.log('No previous connection to close');
+            await bot.launch({
+                dropPendingUpdates: true,
+                allowedUpdates: ['message', 'callback_query'],
+                polling: {
+                    timeout: 30,
+                    limit: 100
+                }
+            });
+            console.log('✅ Bot launched successfully!');
+        } catch (launchError) {
+            // Если ошибка 409 - ждем и пробуем еще раз
+            if (launchError.response?.error_code === 409 || 
+                launchError.message?.includes('409') || 
+                launchError.message?.includes('Conflict')) {
+                
+                console.log('⚠️  Conflict detected. Waiting 10 seconds and retrying...');
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                
+                console.log('🔄 Retrying bot launch...');
+                await bot.launch({
+                    dropPendingUpdates: true,
+                    allowedUpdates: ['message', 'callback_query'],
+                    polling: {
+                        timeout: 30,
+                        limit: 100
+                    }
+                });
+                console.log('✅ Bot launched on retry!');
+            } else {
+                throw launchError;
+            }
         }
-
-        // Запускаем бота с force
-        await bot.launch({
-            dropPendingUpdates: true,
-            allowedUpdates: []
-        });
-
-        console.log('✅ Bot launched successfully!');
 
     } catch (error) {
         console.error('❌ Failed to start application:', error.message);
-
-        // Если ошибка 409 - ждем и пробуем еще раз
-        if (error.message.includes('409') || error.message.includes('Conflict')) {
-            console.log('🔄 Conflict detected, waiting 10 seconds and retrying...');
-            await new Promise(resolve => setTimeout(resolve, 10000));
-            console.log('🔄 Retrying bot launch...');
+        
+        // Последняя попытка через 30 секунд
+        console.log('⏳ Waiting 30 seconds for final retry...');
+        await new Promise(resolve => setTimeout(resolve, 30000));
+        
+        try {
+            console.log('🔄 Final retry...');
             await bot.launch({
                 dropPendingUpdates: true,
-                allowedUpdates: []
+                allowedUpdates: ['message', 'callback_query']
             });
-            console.log('✅ Bot launched on retry!');
-        } else {
+            console.log('✅ Bot launched on final retry!');
+        } catch (finalError) {
+            console.error('❌ All retries failed. Exiting...');
             process.exit(1);
         }
     }
 }
 
 // Graceful shutdown
-const stopApp = () => {
+let isShuttingDown = false;
+
+const stopApp = async () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
     console.log('🛑 Stopping application...');
-    bot.stop();
-    server.close(() => {
-        console.log('✅ Application stopped');
-        process.exit(0);
-    });
+    
+    try {
+        // Останавливаем бота
+        await bot.stop();
+        console.log('✅ Bot stopped');
+    } catch (error) {
+        console.error('Error stopping bot:', error);
+    }
+    
+    try {
+        // Закрываем сервер
+        server.close(() => {
+            console.log('✅ HTTP server closed');
+            process.exit(0);
+        });
+        
+        // Таймаут на случай, если сервер не закрывается
+        setTimeout(() => {
+            console.log('⚠️  Force exit after timeout');
+            process.exit(0);
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error closing server:', error);
+        process.exit(1);
+    }
 };
 
 process.once('SIGINT', stopApp);

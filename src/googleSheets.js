@@ -21,7 +21,12 @@ class GoogleSheetsService {
 
     async saveApplication(answers) {
         try {
-            console.log('Saving application to Google Sheets:', answers);
+            console.log('Saving application to Google Sheets:', {
+                name: answers.name,
+                date: answers.date,
+                time: answers.time,
+                eventId: answers.eventId
+            });
 
             const values = [
                 [
@@ -33,18 +38,18 @@ class GoogleSheetsService {
                     answers.phone || '',
                     answers.additional || '',
                     answers.eventId || '',
-                    'pending'
+                    answers.status || 'pending',
+                    answers.userId || '',
+                    answers.reminderStatus || 'no'
                 ]
             ];
 
             const request = {
                 spreadsheetId: this.spreadsheetId,
-                range: 'Sheet1!A:I', // Убедитесь, что лист называется именно Sheet1
+                range: 'Sheet1!A:K', // Обновлено до колонки K
                 valueInputOption: 'RAW',
                 insertDataOption: 'INSERT_ROWS',
-                resource: {
-                    values: values,
-                },
+                resource: { values },
             };
 
             console.log('Sending request to Google Sheets...');
@@ -54,8 +59,7 @@ class GoogleSheetsService {
             return response.data;
         } catch (error) {
             console.error('❌ Error saving to Google Sheets:');
-            console.error('Error details:', error.message);
-            console.error('Spreadsheet ID:', this.spreadsheetId);
+            console.error('Error message:', error.message);
 
             if (error.code === 404) {
                 throw new Error(`Таблица не найдена. Проверьте ID таблицы: ${this.spreadsheetId}`);
@@ -63,7 +67,9 @@ class GoogleSheetsService {
                 throw new Error('Нет доступа к таблице. Убедитесь, что сервисный аккаунт имеет права редактора.');
             }
 
-            throw error;
+            // Не выбрасываем ошибку, чтобы бот не падал
+            console.error('⚠️  Continuing despite Google Sheets error');
+            return null;
         }
     }
 
