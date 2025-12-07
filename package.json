@@ -4,11 +4,17 @@
   "description": "Telegram bot for Univerland excursions",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node render-start.js",
     "dev": "nodemon src/index.js",
+    "bot": "node src/index.js",
+    "check": "node check-config.js",
     "test": "echo \"No tests yet\" && exit 0"
   },
-  "keywords": ["telegram", "bot", "excursions"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "excursions"
+  ],
   "author": "Your Name",
   "license": "ISC",
   "type": "commonjs",
