@@ -25,6 +25,19 @@ console.log('=========================');
     }
 })();
 
+console.log('=== BOT PROCESS STARTED ===');
+console.log('PID:', process.pid);
+console.log('Start time:', new Date().toISOString());
+
+// Проверка на дублирующий запуск
+if (process.env.BOT_LOCK === 'true') {
+    console.log('⚠️  Another bot instance detected. Exiting gracefully...');
+    process.exit(0);
+}
+
+// Устанавливаем блокировку
+process.env.BOT_LOCK = 'true';
+
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Устанавливаем меню команд бота
@@ -1244,8 +1257,8 @@ bot.catch((err, ctx) => {
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
-            status: 'ok', 
+        res.end(JSON.stringify({
+            status: 'ok',
             timestamp: new Date().toISOString(),
             pid: process.pid,
             service: 'Univerland Excursions Bot'
@@ -1261,70 +1274,56 @@ const PORT = process.env.PORT || 10000;
 
 // Функция запуска приложения
 async function startApp() {
-    try {
-        console.log('🚀 Starting application... PID:', process.pid);
+    console.log('🚀 Starting application...');
 
-        // ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ
+    try {
+        // 1. ЗАПУСКАЕМ СЕРВЕР ПЕРВЫМ (без retry логики)
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`✅ HTTP server started on port ${PORT}`);
-            console.log(`🔗 Health check available at: http://0.0.0.0:${PORT}/health`);
+            console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
         });
 
-        console.log('🤖 Starting Telegram bot...');
-
-        // ЗАПУСКАЕМ БОТА БЕЗ ЗАДЕРЖКИ, но с обработкой конфликта
-        try {
-            await bot.launch({
-                dropPendingUpdates: true,
-                allowedUpdates: ['message', 'callback_query'],
-                polling: {
-                    timeout: 30,
-                    limit: 100
-                }
-            });
-            console.log('✅ Bot launched successfully!');
-        } catch (launchError) {
-            // Если ошибка 409 - ждем и пробуем еще раз
-            if (launchError.response?.error_code === 409 || 
-                launchError.message?.includes('409') || 
-                launchError.message?.includes('Conflict')) {
-                
-                console.log('⚠️  Conflict detected. Waiting 10 seconds and retrying...');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                
-                console.log('🔄 Retrying bot launch...');
-                await bot.launch({
-                    dropPendingUpdates: true,
-                    allowedUpdates: ['message', 'callback_query'],
-                    polling: {
-                        timeout: 30,
-                        limit: 100
-                    }
-                });
-                console.log('✅ Bot launched on retry!');
-            } else {
-                throw launchError;
-            }
+        // 2. Тестируем подключения (опционально)
+        console.log('Testing Google Sheets connection...');
+        const isConnected = await googleSheets.testConnection();
+        if (!isConnected) {
+            console.warn('⚠️  Google Sheets connection warning');
         }
+
+        // 3. ЗАПУСКАЕМ БОТА ОДИН РАЗ (без повторных попыток!)
+        console.log('🤖 Launching Telegram bot...');
+
+        await bot.launch({
+            dropPendingUpdates: true,
+            allowedUpdates: ['message', 'callback_query'],
+            polling: {
+                timeout: 30,
+                limit: 100
+            }
+        });
+
+        console.log('✅ Bot launched successfully!');
+        console.log('=== BOT READY ===');
+
+        // 4. Простой health check логгинг
+        setInterval(() => {
+            console.log(`[${new Date().toISOString()}] Bot is alive`);
+        }, 5 * 60 * 1000); // Каждые 5 минут
 
     } catch (error) {
-        console.error('❌ Failed to start application:', error.message);
-        
-        // Последняя попытка через 30 секунд
-        console.log('⏳ Waiting 30 seconds for final retry...');
-        await new Promise(resolve => setTimeout(resolve, 30000));
-        
-        try {
-            console.log('🔄 Final retry...');
-            await bot.launch({
-                dropPendingUpdates: true,
-                allowedUpdates: ['message', 'callback_query']
-            });
-            console.log('✅ Bot launched on final retry!');
-        } catch (finalError) {
-            console.error('❌ All retries failed. Exiting...');
-            process.exit(1);
+        console.error('❌ Fatal error during startup:', error.message);
+
+        // Анализируем ошибку для логирования
+        if (error.response?.error_code === 409) {
+            console.error('💥 Conflict error: Another bot instance is running');
+            console.error('💡 Solution: Make sure only one instance runs on Render');
+        } else if (error.message?.includes('port')) {
+            console.error('💥 Port conflict:', error.message);
         }
+
+        // Выходим без повторных попыток
+        console.log('🛑 Exiting process...');
+        process.exit(1);
     }
 }
 
@@ -1334,9 +1333,9 @@ let isShuttingDown = false;
 const stopApp = async () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    
+
     console.log('🛑 Stopping application...');
-    
+
     try {
         // Останавливаем бота
         await bot.stop();
@@ -1344,20 +1343,20 @@ const stopApp = async () => {
     } catch (error) {
         console.error('Error stopping bot:', error);
     }
-    
+
     try {
         // Закрываем сервер
         server.close(() => {
             console.log('✅ HTTP server closed');
             process.exit(0);
         });
-        
+
         // Таймаут на случай, если сервер не закрывается
         setTimeout(() => {
             console.log('⚠️  Force exit after timeout');
             process.exit(0);
         }, 5000);
-        
+
     } catch (error) {
         console.error('Error closing server:', error);
         process.exit(1);
